@@ -1,0 +1,9 @@
+/szpont/target
+/szpont/.tmp
+/.vscode
+.wrangler
+docs/node_modules
+docs/.next
+docs/out
+/REVIEW.md
+/.tmp
