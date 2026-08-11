@@ -68,6 +68,46 @@ h2 {
   color: var(--accent);
 }
 
+h3 {
+  font-size: 1rem;
+  margin: 1.5rem 0 0.5rem;
+}
+
+.vid {
+  border: 1px solid var(--line);
+  background-size: 100% 100%;
+  aspect-ratio: 16 / 9;
+}
+
+.vid img,
+.vid video {
+  display: block;
+  width: 100%;
+}
+
+.vids {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1.25rem;
+  position: relative;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(180%, calc(100vw - 3rem));
+}
+
+.vids h3 {
+  margin: 0 0 0.75rem;
+  text-align: center;
+  font-size: 1.3rem;
+  font-weight: bold;
+  letter-spacing: 0.02em;
+  background: linear-gradient(180deg, #fff7e0 0%, var(--accent) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 2px 6px rgba(240, 180, 41, 0.35));
+}
+
 p {
   margin: 0.75rem 0;
 }

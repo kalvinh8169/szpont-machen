@@ -1,3 +1,5 @@
+import Vid from "./Vid";
+
 export default function Overview() {
   return (
     <>
@@ -43,6 +45,43 @@ export default function Overview() {
       <pre>
         <code>cargo install szpont</code>
       </pre>
+
+      <h2>Features</h2>
+
+      <div className="vids">
+        <div>
+          <h3>Intuitive TUI experience</h3>
+          <Vid name="start" alt="Browsing the szpont session list" />
+        </div>
+
+        <div>
+          <h3>Resume your sessions</h3>
+          <Vid name="resume" alt="Resuming a session with Enter" />
+        </div>
+
+        <div>
+          <h3>Start new sessions</h3>
+          <Vid
+            name="new"
+            alt="Starting a new session in Claude Code, Codex or Kimi"
+          />
+        </div>
+
+        <div>
+          <h3>Archive your work</h3>
+          <Vid name="archive" alt="Archiving a finished session" />
+        </div>
+
+        <div>
+          <h3>Rename your session</h3>
+          <Vid name="rename" alt="Giving a session a custom title" />
+        </div>
+
+        <div>
+          <h3>View as a tree</h3>
+          <Vid name="tree" alt="Sessions grouped as a tree" />
+        </div>
+      </div>
     </>
   );
 }
