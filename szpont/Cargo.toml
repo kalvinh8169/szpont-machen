@@ -1,10 +1,15 @@
 [package]
 name = "szpont"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2024"
 rust-version = "1.91"
-description = "szpont machen — AI session manager TUI"
+description = "szpont machen — AI session manager TUI for Claude Code, Codex and Kimi Code"
 license = "Unlicense"
+repository = "https://github.com/tjzel/szpont-machen"
+homepage = "https://github.com/tjzel/szpont-machen"
+readme = "../README.md"
+keywords = ["tui", "ai", "claude", "codex", "sessions"]
+categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
 anyhow = "1"
