@@ -89,7 +89,17 @@ fn event_loop(
                         scanner.quit();
                         return exec_replace(&spec);
                     }
-                    let outcome = suspend_and_run(terminal, &spec);
+                    let outcome = if in_tmux() {
+                        match tmux_open_window(&spec) {
+                            Ok(()) => format!("{} opened in a new tmux window", spec.program),
+                            Err(err) => {
+                                crate::logging::warn(&format!("tmux new-window failed: {err:#}"));
+                                suspend_and_run(terminal, &spec)
+                            }
+                        }
+                    } else {
+                        suspend_and_run(terminal, &spec)
+                    };
                     app.status = Some(outcome);
                     app.apply_next_snapshot = true;
                     scanner.refresh();
@@ -116,6 +126,56 @@ fn event_loop(
             }
         }
     }
+}
+
+fn in_tmux() -> bool {
+    std::env::var_os("TMUX").is_some_and(|value| !value.is_empty())
+}
+
+fn tmux_open_window(spec: &LaunchSpec) -> anyhow::Result<()> {
+    let mut command = Command::new("tmux");
+    command.args(tmux_new_window_args(spec));
+    if let Some(path) = sanitized_path_env() {
+        command.env("PATH", path);
+    }
+    let output = command.output()?;
+    if !output.status.success() {
+        let stderr = crate::core::sanitize_for_terminal(&String::from_utf8_lossy(&output.stderr));
+        anyhow::bail!("tmux exited with {}: {}", output.status, stderr.trim());
+    }
+    Ok(())
+}
+
+fn tmux_new_window_args(spec: &LaunchSpec) -> Vec<std::ffi::OsString> {
+    let name = std::path::Path::new(&spec.program).file_name().map_or_else(
+        || spec.program.clone(),
+        |n| n.to_string_lossy().into_owned(),
+    );
+    let shell_command = std::iter::once(&spec.program)
+        .chain(spec.args.iter())
+        .map(|arg| shell_escape(arg))
+        .collect::<Vec<String>>()
+        .join(" ");
+    vec![
+        "new-window".into(),
+        "-n".into(),
+        name.into(),
+        "-c".into(),
+        spec.cwd.clone().into_os_string(),
+        "--".into(),
+        shell_command.into(),
+    ]
+}
+
+fn shell_escape(arg: &str) -> String {
+    if !arg.is_empty()
+        && arg
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '/' | ':' | '@'))
+    {
+        return arg.to_string();
+    }
+    format!("'{}'", arg.replace('\'', "'\\''"))
 }
 
 fn suspend_and_run(
@@ -186,4 +246,47 @@ fn install_panic_hook() {
         let _ = execute!(io::stdout(), LeaveAlternateScreen, cursor::Show);
         original(info);
     }));
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::*;
+
+    #[test]
+    fn shell_escape_passes_safe_args_and_quotes_the_rest() {
+        assert_eq!(shell_escape("--resume"), "--resume");
+        assert_eq!(shell_escape("session_ab12-cd"), "session_ab12-cd");
+        assert_eq!(shell_escape("a b"), "'a b'");
+        assert_eq!(shell_escape("it's"), "'it'\\''s'");
+        assert_eq!(shell_escape(""), "''");
+        assert_eq!(shell_escape("$(rm -rf x)"), "'$(rm -rf x)'");
+    }
+
+    #[test]
+    fn tmux_new_window_args_set_name_cwd_and_escaped_command() {
+        let spec = LaunchSpec {
+            program: "claude".to_string(),
+            args: vec!["--resume".to_string(), "abc 123".to_string()],
+            cwd: PathBuf::from("/tmp/my repo"),
+        };
+        let args = tmux_new_window_args(&spec);
+        let args: Vec<String> = args
+            .into_iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            args,
+            vec![
+                "new-window",
+                "-n",
+                "claude",
+                "-c",
+                "/tmp/my repo",
+                "--",
+                "claude --resume 'abc 123'",
+            ]
+        );
+    }
 }
