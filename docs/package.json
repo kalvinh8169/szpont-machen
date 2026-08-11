@@ -1,6 +1,7 @@
 {
   "name": "szpont-machen-website",
   "private": true,
+  "packageManager": "pnpm@10.34.5",
   "scripts": {
     "dev": "next dev",
     "build": "next build"
