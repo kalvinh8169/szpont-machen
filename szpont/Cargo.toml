@@ -11,6 +11,10 @@ readme = "../README.md"
 keywords = ["tui", "ai", "claude", "codex", "sessions"]
 categories = ["command-line-utilities", "development-tools"]
 
+[profile.dist]
+inherits = "release"
+lto = "thin"
+
 [dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
