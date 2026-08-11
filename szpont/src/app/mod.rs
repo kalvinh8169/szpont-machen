@@ -175,6 +175,8 @@ pub struct App {
     pub apply_next_snapshot: bool,
     pub scan_status: Option<String>,
     pub scanning: bool,
+    pub allowlist_mode: bool,
+    pub limits_disabled: bool,
 }
 
 impl App {
@@ -214,6 +216,8 @@ impl App {
             apply_next_snapshot: false,
             scan_status: None,
             scanning: false,
+            allowlist_mode: false,
+            limits_disabled: false,
         }
     }
 
@@ -282,11 +286,13 @@ impl App {
                         r.session.key.tool.as_str(),
                         r.session.title.as_deref().unwrap_or(""),
                         r.session.preview.as_deref().unwrap_or(""),
-                        r.session
-                            .cwd
-                            .as_deref()
-                            .map(|p| p.to_string_lossy().into_owned())
-                            .unwrap_or_default()
+                        r.project_label().unwrap_or_else(|| {
+                            r.session
+                                .cwd
+                                .as_deref()
+                                .map(|p| p.to_string_lossy().into_owned())
+                                .unwrap_or_default()
+                        })
                     );
                     crate::core::fuzzy_score(q, &haystack).map(|score| (i, score))
                 }
@@ -298,7 +304,7 @@ impl App {
         if self.screen == Screen::Tree {
             matched.sort_by_cached_key(|&(i, _)| {
                 (
-                    tree_components(rows[i].session.cwd.as_deref()),
+                    row_tree_components(&rows[i]),
                     std::cmp::Reverse(rows[i].session.updated_at_ms),
                 )
             });
@@ -997,6 +1003,13 @@ impl App {
             ));
             return;
         }
+        if row.demo_archived {
+            self.status = Some(
+                "this session is archived by the demo config — set archived to false there"
+                    .to_string(),
+            );
+            return;
+        }
         match self.store.reopen(session_key.tool, &session_key.id) {
             Ok(_) => {
                 if let Some(row) = self.rows.iter_mut().find(|r| r.session.key == session_key) {
@@ -1071,6 +1084,20 @@ pub(crate) fn tree_components(cwd: Option<&std::path::Path>) -> Vec<String> {
     components
 }
 
+pub(crate) fn row_tree_components(row: &SessionRow) -> Vec<String> {
+    row.project_alias().map_or_else(
+        || tree_components(row.session.cwd.as_deref()),
+        |alias| {
+            let path = std::path::Path::new(alias);
+            if path.is_absolute() {
+                tree_components(Some(path))
+            } else {
+                vec![alias.to_string()]
+            }
+        },
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1082,6 +1109,8 @@ mod tests {
 
     fn fake_row(id: &str) -> SessionRow {
         SessionRow {
+            project_alias: None,
+            demo_archived: false,
             session: SessionSummary {
                 key: SessionKey {
                     tool: ToolId::Claude,
@@ -1538,5 +1567,26 @@ mod tests {
         let components = tree_components(Some(&deep));
         assert!(components.len() <= MAX_TREE_DEPTH);
         assert_eq!(components.last().unwrap(), "…/d");
+    }
+
+    #[test]
+    fn allowlisted_rows_search_and_group_by_alias_without_real_path() {
+        let mut app = test_app("presentation-alias");
+        app.rows.truncate(1);
+        app.rows[0].session.cwd = Some(PathBuf::from("/private/secret-project"));
+        app.rows[0].project_alias = Some("Demo Project".to_string());
+        assert_eq!(row_tree_components(&app.rows[0]), vec!["Demo Project"]);
+
+        app.filter = Some("secret-project".to_string());
+        assert!(app.visible_indices().is_empty());
+        app.filter = Some("Demo Project".to_string());
+        assert_eq!(app.visible_indices(), vec![0]);
+
+        let home = dirs::home_dir().unwrap();
+        app.rows[0].project_alias = Some(home.join("demo/project").display().to_string());
+        assert_eq!(
+            row_tree_components(&app.rows[0]),
+            vec!["~", "demo", "project"]
+        );
     }
 }

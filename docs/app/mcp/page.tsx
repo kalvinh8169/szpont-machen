@@ -48,7 +48,15 @@ export default function Mcp() {
       </p>
       <p>
         The MCP server writes to the shared database; the TUI picks changes up
-        on its next refresh tick (5s default).
+        on its next refresh tick (15s default, <code>--refresh-secs</code>).
+        Every call is recorded in a local audit table (<code>mcp_events</code>,
+        arguments JSON capped at 4KB, newest 1000 rows kept).
+      </p>
+      <p>
+        Install details: Claude Code is registered with{" "}
+        <code>--scope user</code>; for Kimi the entry is written to{" "}
+        <code>~/.kimi-code/mcp.json</code> and a previous file is kept at{" "}
+        <code>mcp.json.bak</code>.
       </p>
     </>
   );

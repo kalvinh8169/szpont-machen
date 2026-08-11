@@ -1,4 +1,5 @@
 mod adapters;
+mod allowlist;
 mod app;
 mod cli;
 mod commands;

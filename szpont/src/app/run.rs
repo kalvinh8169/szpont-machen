@@ -19,13 +19,32 @@ use crate::scanner::{self, ScannerHandle};
 use crate::store::Store;
 
 pub fn run(cli: &Cli) -> anyhow::Result<()> {
+    let allowlist = cli
+        .session_allowlist
+        .as_deref()
+        .map(crate::allowlist::SessionAllowlist::load)
+        .transpose()?;
     let store = Store::open(cli.db.as_deref())?;
     let (repo, repo_forced) = resolve_repo_context(cli);
     let (event_tx, event_rx) = channel();
-    let scanner = scanner::spawn(cli.db.clone(), cli.refresh_secs, cli.no_watch, event_tx);
+    let scanner = scanner::spawn(
+        cli.db.clone(),
+        cli.refresh_secs,
+        cli.no_watch,
+        allowlist.clone(),
+        event_tx,
+    );
     install_panic_hook();
     let mut terminal = setup_terminal()?;
     let mut app = App::new(store, repo, repo_forced);
+    if let Some(allowlist) = &allowlist {
+        app.allowlist_mode = true;
+        app.limits_disabled = true;
+        app.status = Some(format!(
+            "promo allowlist: {} enabled sessions",
+            allowlist.len()
+        ));
+    }
     let result = event_loop(&mut terminal, &mut app, &event_rx, &scanner);
     restore_terminal(&mut terminal)?;
     scanner.quit();

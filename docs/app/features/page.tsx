@@ -32,12 +32,13 @@ export default function Features() {
       <ul>
         <li>Token usage per session, subagents included.</li>
         <li>
-          Context-window fullness (<code>CTX</code> column) as a percentage
-          when the window size is known.
+          Context-window usage per session (<code>used/window</code> with a
+          fill bar in the <code>CTX</code> column when the window size is
+          known).
         </li>
         <li>
-          Rate-limit state per tool; exact values from the providers&apos;
-          usage endpoints with <code>--features online-limits</code>.
+          Rate-limit state per tool, with exact values from the
+          providers&apos; usage endpoints.
         </li>
       </ul>
 

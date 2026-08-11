@@ -6,7 +6,7 @@ use ratatui::widgets::{
     Block, Cell, Clear, List, ListItem, Paragraph, Row, Table, TableState, Wrap,
 };
 
-use crate::app::{App, Pending, Screen, tree_components};
+use crate::app::{App, Pending, Screen};
 use crate::core::snapshot::SessionRow;
 use crate::core::{Liveness, format_age, format_tokens, now_ms, truncate};
 
@@ -123,12 +123,12 @@ fn draw_detail_popup(frame: &mut Frame, app: &App) {
         ]),
         Line::from(vec![
             Span::styled("cwd      ", dim),
-            Span::raw(
+            Span::raw(row.project_label().unwrap_or_else(|| {
                 row.session
                     .cwd
                     .as_deref()
-                    .map_or_else(|| "?".to_string(), |p| p.display().to_string()),
-            ),
+                    .map_or_else(|| "?".to_string(), |p| p.display().to_string())
+            })),
         ]),
         Line::from(vec![
             Span::styled("model    ", dim),
@@ -212,7 +212,9 @@ fn popup_area(screen: Rect, width: u16, content_lines: usize) -> Rect {
 fn draw_limits_popup(frame: &mut Frame, app: &App) {
     let now = now_ms();
     let mut lines: Vec<Line> = Vec::new();
-    if app.limits.is_empty() {
+    if app.limits_disabled {
+        lines.push(Line::from("limit data is hidden in promo mode"));
+    } else if app.limits.is_empty() {
         lines.push(Line::from("no limit data yet"));
     }
     for tool in &app.limits {
@@ -339,12 +341,21 @@ fn header_line(app: &App, with_logo: bool) -> Line<'static> {
             Liveness::Idle => {}
         }
     }
-    let scope = match (app.screen, &app.repo) {
-        (Screen::Archive, _) => "archive".to_string(),
-        (Screen::Tree, _) if app.tree_of_archive() => "archive by location".to_string(),
-        (Screen::Tree, _) => "by location".to_string(),
-        (Screen::Repo, Some(ctx)) => format!("repo: {}", ctx.name),
-        _ => "all repos".to_string(),
+    let scope = if app.allowlist_mode {
+        match app.screen {
+            Screen::Archive => "promo archive".to_string(),
+            Screen::Tree if app.tree_of_archive() => "promo archive by project".to_string(),
+            Screen::Tree => "promo by project".to_string(),
+            _ => "promo allowlist".to_string(),
+        }
+    } else {
+        match (app.screen, &app.repo) {
+            (Screen::Archive, _) => "archive".to_string(),
+            (Screen::Tree, _) if app.tree_of_archive() => "archive by location".to_string(),
+            (Screen::Tree, _) => "by location".to_string(),
+            (Screen::Repo, Some(ctx)) => format!("repo: {}", ctx.name),
+            _ => "all repos".to_string(),
+        }
     };
     let mut spans = Vec::new();
     if with_logo {
@@ -403,6 +414,12 @@ fn header_line(app: &App, with_logo: bool) -> Line<'static> {
 }
 
 fn limits_spans(app: &App) -> Vec<Span<'static>> {
+    if app.limits_disabled {
+        return vec![Span::styled(
+            " limits: hidden",
+            Style::new().fg(Color::DarkGray),
+        )];
+    }
     if app.limits.is_empty() {
         return vec![Span::styled(
             " limits: measuring…",
@@ -492,7 +509,7 @@ fn draw_tree_table(frame: &mut Frame, app: &mut App, area: Rect) {
         .max(10) as usize;
     let mut roots = TreeDir::new(String::new());
     for &i in &visible {
-        let components = tree_components(app.rows[i].session.cwd.as_deref());
+        let components = crate::app::row_tree_components(&app.rows[i]);
         roots.insert(&components, i);
     }
     let mut table_rows: Vec<Row> = Vec::new();
@@ -1026,6 +1043,9 @@ fn hint_spans<'a>(hints: &'a [(&'a str, &'a str)]) -> Vec<Span<'static>> {
 }
 
 fn repo_label(row: &SessionRow) -> String {
+    if let Some(alias) = row.project_label() {
+        return truncate_left(&alias, REPO_WIDTH as usize);
+    }
     let Some(cwd) = row.session.cwd.as_deref() else {
         return "?".to_string();
     };

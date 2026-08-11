@@ -1,6 +1,4 @@
-#[cfg(feature = "online-limits")]
 mod claude_oauth;
-#[cfg(feature = "online-limits")]
 mod kimi_oauth;
 
 use std::path::{Path, PathBuf};
@@ -13,9 +11,7 @@ use crate::store::Store;
 const STALE_AFTER_MS: i64 = 3600 * 1000;
 const FIVE_HOURS_SECS: i64 = 5 * 3600;
 const WEEK_SECS: i64 = 7 * 24 * 3600;
-#[cfg(feature = "online-limits")]
 pub(crate) const MIN_CALL_INTERVAL_MS: i64 = 180_000;
-#[cfg(feature = "online-limits")]
 pub(crate) const HTTP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -76,7 +72,6 @@ pub fn load_cached(store: &Store) -> Vec<ToolLimits> {
 }
 
 fn claude_limits(store: &Store) -> Option<ToolLimits> {
-    #[cfg(feature = "online-limits")]
     if let Some(mut limits) = claude_oauth::probe(store) {
         let now_secs = now_ms() / 1000;
         for window in &mut limits.windows {
@@ -129,7 +124,6 @@ fn claude_limits(store: &Store) -> Option<ToolLimits> {
     })
 }
 
-#[cfg(feature = "online-limits")]
 pub(crate) fn cached_probe(
     store: &Store,
     last_call_key: &str,
@@ -156,11 +150,9 @@ pub(crate) fn cached_probe(
 }
 
 fn kimi_limits(store: &Store) -> ToolLimits {
-    #[cfg(feature = "online-limits")]
     if let Some(limits) = kimi_oauth::probe(store) {
         return limits;
     }
-    let _ = store;
     ToolLimits {
         tool: ToolId::Kimi,
         windows: Vec::new(),

@@ -1,12 +1,15 @@
 use std::path::{Path, PathBuf};
 
 use crate::adapters;
+use crate::allowlist::SessionAllowlist;
 use crate::core::{BUCKET_RETENTION_SECS, Liveness, SessionKey, SessionSummary, Usage, now_ms};
 use crate::store::checkpoints::CheckpointTxn;
 use crate::store::{Store, StoredMeta};
 
 pub struct SessionRow {
     pub session: SessionSummary,
+    pub project_alias: Option<String>,
+    pub demo_archived: bool,
     pub liveness: Liveness,
     pub completed: bool,
     pub completed_at: Option<i64>,
@@ -21,21 +24,50 @@ impl SessionRow {
             .map(|u| u.total())
             .or(self.session.native_tokens_used)
     }
+
+    pub fn project_alias(&self) -> Option<&str> {
+        self.project_alias.as_deref()
+    }
+
+    pub fn project_label(&self) -> Option<String> {
+        self.project_alias().map(format_project_alias)
+    }
+}
+
+pub fn format_project_alias(alias: &str) -> String {
+    let path = Path::new(alias);
+    if !path.is_absolute() {
+        return alias.to_string();
+    }
+    dirs::home_dir()
+        .and_then(|home| path.strip_prefix(home).ok().map(Path::to_path_buf))
+        .map_or_else(
+            || alias.to_string(),
+            |rest| {
+                if rest.as_os_str().is_empty() {
+                    "~".to_string()
+                } else {
+                    format!("~/{}", rest.display())
+                }
+            },
+        )
 }
 
 const PRUNE_GRACE_MS: i64 = 15 * 60 * 1000;
 
-pub fn collect_sessions(
+pub fn collect_sessions_filtered(
     store: &mut Store,
     progress: &mut dyn FnMut(&str),
+    allowlist: Option<&SessionAllowlist>,
 ) -> anyhow::Result<Vec<SessionRow>> {
-    collect_sessions_with(&adapters::installed(), store, progress)
+    collect_sessions_with(&adapters::installed(), store, progress, allowlist)
 }
 
 pub fn collect_sessions_with(
     adapters: &[Box<dyn adapters::ToolAdapter>],
     store: &mut Store,
     progress: &mut dyn FnMut(&str),
+    allowlist: Option<&SessionAllowlist>,
 ) -> anyhow::Result<Vec<SessionRow>> {
     let meta = store.session_meta_map()?;
     let window_overrides = store.context_window_overrides()?;
@@ -55,6 +87,10 @@ pub fn collect_sessions_with(
                 continue;
             }
         };
+        let discovered: Vec<SessionSummary> = discovered
+            .into_iter()
+            .filter(|session| allowlist.is_none_or(|list| list.contains(&session.key)))
+            .collect();
         discovered_counts.insert(adapter.id().as_str(), discovered.len());
         let total = discovered.len();
         progress(&format!(
@@ -109,9 +145,6 @@ pub fn collect_sessions_with(
                     if let Some(model) = &enrich.model {
                         session.model = Some(model.clone());
                     }
-                    if let Some(custom) = stored.and_then(StoredMeta::custom_title) {
-                        session.title = Some(custom);
-                    }
                     if let Some(tokens) = enrich.context_tokens {
                         context_tokens = Some(tokens);
                     }
@@ -141,6 +174,14 @@ pub fn collect_sessions_with(
                     None
                 }
             };
+            if let Some(custom) = stored.and_then(StoredMeta::custom_title) {
+                session.title = Some(custom);
+            } else if let Some(title) = allowlist
+                .and_then(|list| list.aliases(&session.key))
+                .and_then(|aliases| aliases.title.as_ref())
+            {
+                session.title = Some(title.clone());
+            }
             if context_tokens.is_none() {
                 let probed = adapter.probe_context(&session);
                 let (tokens, window) = probed.unwrap_or((0, None));
@@ -167,8 +208,15 @@ pub fn collect_sessions_with(
             ckpt.touch_seen(session.key.tool, &session.key.id, now_ms())?;
             let liveness = adapter.liveness(&session);
             let completed_at = stored.and_then(|m| m.completed_at);
-            let completed = session.native_archived || completed_at.is_some();
+            let demo_archived = allowlist
+                .and_then(|list| list.aliases(&session.key))
+                .is_some_and(|aliases| aliases.archived);
+            let completed = demo_archived || session.native_archived || completed_at.is_some();
             rows.push(SessionRow {
+                project_alias: allowlist
+                    .and_then(|list| list.aliases(&session.key))
+                    .map(|aliases| aliases.project.clone()),
+                demo_archived,
                 session,
                 liveness,
                 completed,
@@ -243,12 +291,17 @@ fn cwd_definitively_missing(cwd: Option<&Path>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
+    use std::rc::Rc;
+
     use crate::adapters::ToolAdapter;
+    use crate::allowlist::SessionAllowlist;
     use crate::core::{Enrichment, LaunchSpec, TitleKind, ToolId};
     use crate::store::upsert_session_facts;
 
     struct StubAdapter {
         sessions: Vec<SessionSummary>,
+        refresh_count: Option<Rc<Cell<usize>>>,
     }
 
     impl ToolAdapter for StubAdapter {
@@ -273,6 +326,9 @@ mod tests {
             _session: &SessionSummary,
             _ckpt: &mut CheckpointTxn,
         ) -> anyhow::Result<Enrichment> {
+            if let Some(count) = &self.refresh_count {
+                count.set(count.get() + 1);
+            }
             Ok(Enrichment::default())
         }
 
@@ -325,7 +381,25 @@ mod tests {
     }
 
     fn adapters_with(sessions: Vec<SessionSummary>) -> Vec<Box<dyn ToolAdapter>> {
-        vec![Box::new(StubAdapter { sessions })]
+        vec![Box::new(StubAdapter {
+            sessions,
+            refresh_count: None,
+        })]
+    }
+
+    fn allowlist(name: &str, title_alias: Option<&str>, archived: bool) -> SessionAllowlist {
+        let dir = PathBuf::from(".tmp/fixtures");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(format!("snapshot-allowlist-{name}.json"));
+        let title = title_alias.map_or_else(|| "null".to_string(), |value| format!("\"{value}\""));
+        std::fs::write(
+            &path,
+            format!(
+                r#"{{"version":1,"sessions":[{{"tool":"claude","session_id":"approved","real_title":"Real","real_path":"/private","project_alias":"Demo Project","title_alias":{title},"archived":{archived},"enabled":true,"notes":null}}]}}"#
+            ),
+        )
+        .unwrap();
+        SessionAllowlist::load(&path).unwrap()
     }
 
     fn seed_meta(store: &Store, id: &str, last_seen_at: Option<i64>) {
@@ -359,7 +433,7 @@ mod tests {
         seed_meta(&store, "gone-recent", Some(now - 1_000));
         seed_meta(&store, "gone-null", None);
         let adapters = adapters_with(vec![summary("kept", None)]);
-        collect_sessions_with(&adapters, &mut store, &mut |_| {}).unwrap();
+        collect_sessions_with(&adapters, &mut store, &mut |_| {}, None).unwrap();
         let meta = store.session_meta_map().unwrap();
         let has = |id: &str| {
             meta.contains_key(&SessionKey {
@@ -378,7 +452,7 @@ mod tests {
         let mut store = test_store("prune-empty");
         seed_meta(&store, "precious", Some(1));
         let adapters = adapters_with(Vec::new());
-        collect_sessions_with(&adapters, &mut store, &mut |_| {}).unwrap();
+        collect_sessions_with(&adapters, &mut store, &mut |_| {}, None).unwrap();
         let meta = store.session_meta_map().unwrap();
         assert_eq!(meta.len(), 1);
     }
@@ -388,7 +462,7 @@ mod tests {
         let mut store = test_store("touch-seen");
         seed_meta(&store, "kept", None);
         let adapters = adapters_with(vec![summary("kept", None)]);
-        collect_sessions_with(&adapters, &mut store, &mut |_| {}).unwrap();
+        collect_sessions_with(&adapters, &mut store, &mut |_| {}, None).unwrap();
         let meta = store.session_meta_map().unwrap();
         let stored = meta
             .get(&SessionKey {
@@ -404,8 +478,48 @@ mod tests {
         let mut store = test_store("custom-title");
         seed_meta(&store, "titled", Some(now_ms()));
         let adapters = adapters_with(vec![summary("titled", Some("auto guess"))]);
-        let rows = collect_sessions_with(&adapters, &mut store, &mut |_| {}).unwrap();
+        let rows = collect_sessions_with(&adapters, &mut store, &mut |_| {}, None).unwrap();
         assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].session.title.as_deref(), Some("Mine"));
+    }
+
+    #[test]
+    fn allowlist_filters_before_usage_and_applies_aliases() {
+        let mut store = test_store("allowlist-filter");
+        let count = Rc::new(Cell::new(0));
+        let adapters: Vec<Box<dyn ToolAdapter>> = vec![Box::new(StubAdapter {
+            sessions: vec![
+                summary("approved", Some("Real")),
+                summary("private", Some("Secret")),
+            ],
+            refresh_count: Some(Rc::clone(&count)),
+        })];
+        let allowlist = allowlist("filter", Some("Safe title"), true);
+        let rows =
+            collect_sessions_with(&adapters, &mut store, &mut |_| {}, Some(&allowlist)).unwrap();
+        assert_eq!(count.get(), 1);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].session.key.id, "approved");
+        assert_eq!(rows[0].session.title.as_deref(), Some("Safe title"));
+        assert_eq!(rows[0].project_alias(), Some("Demo Project"));
+        assert!(rows[0].demo_archived);
+        assert!(rows[0].completed);
+        assert!(
+            !store.session_meta_map().unwrap().contains_key(&SessionKey {
+                tool: ToolId::Claude,
+                id: "private".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn stored_custom_title_overrides_allowlist_title_alias() {
+        let mut store = test_store("allowlist-custom-title");
+        seed_meta(&store, "approved", Some(now_ms()));
+        let adapters = adapters_with(vec![summary("approved", Some("Real"))]);
+        let allowlist = allowlist("custom", Some("Safe title"), false);
+        let rows =
+            collect_sessions_with(&adapters, &mut store, &mut |_| {}, Some(&allowlist)).unwrap();
         assert_eq!(rows[0].session.title.as_deref(), Some("Mine"));
     }
 
@@ -423,5 +537,16 @@ mod tests {
         assert!(!cwd_definitively_missing(Some(Path::new(
             "/Volumes/szpont-test-not-mounted/project"
         ))));
+    }
+
+    #[test]
+    fn project_alias_under_home_uses_tilde() {
+        let home = dirs::home_dir().unwrap();
+        let alias = home.join("demo/project");
+        assert_eq!(
+            format_project_alias(&alias.to_string_lossy()),
+            "~/demo/project"
+        );
+        assert_eq!(format_project_alias("Plain label"), "Plain label");
     }
 }

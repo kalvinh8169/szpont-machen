@@ -11,7 +11,6 @@ pub const BUCKET_FUTURE_SLACK_MS: i64 = 24 * 3600 * 1000;
 pub const TAIL_SCAN_BYTES: u64 = 64 * 1024;
 pub const MAX_LINE_BYTES: usize = 8 * 1024 * 1024;
 pub const MAX_CONFIG_BYTES: u64 = 1024 * 1024;
-#[cfg(feature = "online-limits")]
 pub const MAX_CREDENTIALS_BYTES: u64 = 64 * 1024;
 pub const MAX_SESSION_ID_CHARS: usize = 128;
 pub const MAX_TEXT_FACT_CHARS: usize = 512;

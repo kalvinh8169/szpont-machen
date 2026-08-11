@@ -5,8 +5,9 @@ use std::time::Duration;
 use notify::{RecursiveMode, Watcher};
 
 use crate::adapters;
+use crate::allowlist::SessionAllowlist;
 use crate::app::AppEvent;
-use crate::core::snapshot::collect_sessions;
+use crate::core::snapshot::collect_sessions_filtered;
 use crate::store::Store;
 
 pub enum ScanCommand {
@@ -32,6 +33,7 @@ pub fn spawn(
     db_path: Option<PathBuf>,
     refresh_secs: u64,
     no_watch: bool,
+    allowlist: Option<SessionAllowlist>,
     event_tx: Sender<AppEvent>,
 ) -> ScannerHandle {
     let (cmd_tx, cmd_rx) = channel();
@@ -41,6 +43,7 @@ pub fn spawn(
             db_path.as_deref(),
             refresh_secs,
             no_watch,
+            allowlist.as_ref(),
             &event_tx,
             &cmd_rx,
             watcher_tx,
@@ -53,6 +56,7 @@ fn run_scanner(
     db_path: Option<&std::path::Path>,
     refresh_secs: u64,
     no_watch: bool,
+    allowlist: Option<&SessionAllowlist>,
     event_tx: &Sender<AppEvent>,
     cmd_rx: &Receiver<ScanCommand>,
     watcher_tx: Sender<ScanCommand>,
@@ -70,9 +74,11 @@ fn run_scanner(
         setup_watcher(watcher_tx)
     };
     let refresh_interval = Duration::from_secs(refresh_secs.max(1));
-    let cached = crate::limits::load_cached(&store);
-    if !cached.is_empty() {
-        let _ = event_tx.send(AppEvent::Limits(cached));
+    if allowlist.is_none() {
+        let cached = crate::limits::load_cached(&store);
+        if !cached.is_empty() {
+            let _ = event_tx.send(AppEvent::Limits(cached));
+        }
     }
     let mut last_limits_at: i64 = 0;
     loop {
@@ -80,7 +86,7 @@ fn run_scanner(
         let mut report = |message: &str| {
             let _ = event_tx.send(AppEvent::Progress(message.to_string()));
         };
-        let scanned = match collect_sessions(&mut store, &mut report) {
+        let scanned = match collect_sessions_filtered(&mut store, &mut report, allowlist) {
             Ok(rows) => {
                 let count = rows.len();
                 if event_tx.send(AppEvent::Snapshot(rows)).is_err() {
@@ -94,7 +100,7 @@ fn run_scanner(
             }
         };
         let now = crate::core::now_ms();
-        if now - last_limits_at >= 60_000 {
+        if allowlist.is_none() && now - last_limits_at >= 60_000 {
             last_limits_at = now;
             let _ = event_tx.send(AppEvent::Progress("scan: probing limits…".to_string()));
             let limits = crate::limits::collect(&store);

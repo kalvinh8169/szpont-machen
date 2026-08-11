@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 
-export const metadata: Metadata = { title: "TUI keys — szpont docs" };
+export const metadata: Metadata = { title: "TUI keys — szpont machen docs" };
 
 export default function Keys() {
   return (
@@ -21,6 +21,12 @@ export default function Keys() {
           </tr>
           <tr>
             <td>
+              <code>Home</code> / <code>End</code> / <code>G</code>
+            </td>
+            <td>jump to the first / last row</td>
+          </tr>
+          <tr>
+            <td>
               <code>Enter</code>
             </td>
             <td>
@@ -37,7 +43,10 @@ export default function Keys() {
             <td>
               <code>n</code>
             </td>
-            <td>new session (tool picker)</td>
+            <td>
+              new session (tool picker; <code>1</code>–<code>9</code> picks a
+              tool directly)
+            </td>
           </tr>
           <tr>
             <td>
@@ -47,7 +56,7 @@ export default function Keys() {
               mark as completed: enters marking mode on the selected session;
               keep marking with <code>c</code>, move with <code>↑</code> /{" "}
               <code>↓</code>, confirm with <code>Enter</code>, cancel with{" "}
-              <code>Esc</code>
+              <code>Esc</code> or <code>q</code>
             </td>
           </tr>
           <tr>
@@ -63,11 +72,11 @@ export default function Keys() {
             <td>
               mark for deletion (works on every session screen, including the
               live list): same marking flow with <code>d</code> /{" "}
-              <code>Enter</code> / <code>Esc</code>. Deletion removes the
-              session from szpont <strong>and</strong> from the tool&apos;s own
-              storage (<code>codex delete</code>; file removal for Claude Code
-              and Kimi, which have no delete command). Sessions still open in a
-              tool are skipped.
+              <code>Enter</code> / <code>Esc</code> or <code>q</code>. Deletion
+              removes the session from szpont <strong>and</strong> from the
+              tool&apos;s own storage (<code>codex delete</code>; file removal
+              for Claude Code and Kimi, which have no delete command).
+              Sessions still open in a tool are skipped.
             </td>
           </tr>
           <tr>
@@ -119,20 +128,21 @@ export default function Keys() {
               <code>Esc</code>
             </td>
             <td>
-              close popup · back from archive · clear marks · clear filters
+              back from archive or tree view · clear marks · clear filters —
+              one step per press
             </td>
           </tr>
           <tr>
             <td>
               <code>l</code>
             </td>
-            <td>limit usage popup</td>
+            <td>limit usage popup (any key closes it)</td>
           </tr>
           <tr>
             <td>
               <code>i</code>
             </td>
-            <td>session detail popup</td>
+            <td>session detail popup (any key closes it)</td>
           </tr>
           <tr>
             <td>
@@ -148,7 +158,9 @@ export default function Keys() {
             <td>
               <code>Tab</code>
             </td>
-            <td>cycle tool filter</td>
+            <td>
+              cycle tool filter (<code>Shift+Tab</code> goes in reverse)
+            </td>
           </tr>
           <tr>
             <td>
@@ -186,13 +198,18 @@ export default function Keys() {
             <td>
               <code>BLOCKED</code> (yellow)
             </td>
-            <td>waiting for your input</td>
+            <td>
+              waiting for your input (reported for Claude Code only)
+            </td>
           </tr>
           <tr>
             <td>
               <code>IDLE</code> (cyan)
             </td>
-            <td>open at the prompt</td>
+            <td>
+              open at the prompt — for Codex and Kimi this means a tool process
+              has the session&apos;s directory open
+            </td>
           </tr>
           <tr>
             <td>(empty)</td>
@@ -210,17 +227,17 @@ export default function Keys() {
         Background rescans never reorder the list under you: updates that keep
         the visible row order (token counts, status changes) apply live, while
         updates that would add, remove or reorder rows are held — the top bar
-        shows &quot;⟳ list changed — press r to load&quot;. <code>r</code>{" "}
+        shows &quot;⟳ list changed — press r to refresh&quot;. <code>r</code>{" "}
         applies the held update instantly and rescans; your own actions
         (resume, complete, delete) always apply immediately too.
       </p>
       <p>
-        The <code>CTX</code> column shows how full the session context window
-        is: a percentage when the window size is known (Codex reports it in its
-        rollout; Kimi&apos;s comes from <code>~/.kimi-code/config.toml</code>),
-        otherwise the raw token count of the last request (Claude Code does not
-        record its window size locally — set it once per model in the{" "}
-        <code>o</code> options screen).
+        The <code>CTX</code> column shows context-window usage as{" "}
+        <code>used/window</code> token counts with a fill bar when the window
+        size is known (Codex reports it in its rollout; Kimi&apos;s comes from{" "}
+        <code>~/.kimi-code/config.toml</code>), otherwise the raw token count
+        of the last request (Claude Code does not record its window size
+        locally — set it once per model in the <code>o</code> options screen).
       </p>
     </>
   );

@@ -2,21 +2,21 @@ use std::path::Path;
 
 use serde::Serialize;
 
+use crate::allowlist::SessionAllowlist;
 use crate::cli::{Cli, SessionsArgs};
-use crate::core::snapshot::{SessionRow, collect_sessions};
-use crate::core::{
-    Liveness, SessionSummary, ToolId, Usage, format_age, format_tokens, now_ms, truncate,
-};
+use crate::core::snapshot::{SessionRow, collect_sessions_filtered};
+use crate::core::{Liveness, ToolId, Usage, format_age, format_tokens, now_ms, truncate};
 use crate::store::Store;
 
 const NO_TOOLS_HINT: &str = "no AI CLI session stores found (looked in ~/.claude/projects, ~/.codex, ~/.kimi-code/sessions; override with CLAUDE_CONFIG_DIR / CODEX_HOME / KIMI_CODE_HOME)";
 
 pub fn sessions(cli: &Cli, args: &SessionsArgs) -> anyhow::Result<()> {
     let mut store = Store::open(cli.db.as_deref())?;
+    let allowlist = load_allowlist(cli)?;
     if crate::adapters::installed().is_empty() {
         eprintln!("{NO_TOOLS_HINT}");
     }
-    let mut rows = collect_sessions(&mut store, &mut |_| {})?;
+    let mut rows = collect_sessions_filtered(&mut store, &mut |_| {}, allowlist.as_ref())?;
     if !args.all {
         rows.retain(|r| !r.completed);
     }
@@ -39,6 +39,7 @@ pub fn sessions(cli: &Cli, args: &SessionsArgs) -> anyhow::Result<()> {
 
 pub fn complete(cli: &Cli, tool: &str, session_id: &str) -> anyhow::Result<()> {
     let tool = ToolId::parse(tool)?;
+    ensure_allowed(cli, tool, session_id)?;
     let store = Store::open(cli.db.as_deref())?;
     store.mark_completed(tool, session_id, "cli")?;
     let session_id = crate::core::sanitize_for_terminal(session_id);
@@ -48,6 +49,19 @@ pub fn complete(cli: &Cli, tool: &str, session_id: &str) -> anyhow::Result<()> {
 
 pub fn reopen(cli: &Cli, tool: &str, session_id: &str) -> anyhow::Result<()> {
     let tool = ToolId::parse(tool)?;
+    ensure_allowed(cli, tool, session_id)?;
+    if let Some(allowlist) = load_allowlist(cli)? {
+        let key = crate::core::SessionKey {
+            tool,
+            id: session_id.to_string(),
+        };
+        if allowlist.aliases(&key).is_some_and(|entry| entry.archived) {
+            anyhow::bail!(
+                "{} session {session_id} is archived by the demo config; set archived to false there",
+                tool.as_str()
+            );
+        }
+    }
     let store = Store::open(cli.db.as_deref())?;
     let reopened = store.reopen(tool, session_id)?;
     let session_id = crate::core::sanitize_for_terminal(session_id);
@@ -64,6 +78,14 @@ pub fn reopen(cli: &Cli, tool: &str, session_id: &str) -> anyhow::Result<()> {
 
 pub fn limits(cli: &Cli, json: bool) -> anyhow::Result<()> {
     let store = Store::open(cli.db.as_deref())?;
+    if load_allowlist(cli)?.is_some() {
+        if json {
+            println!("[]");
+        } else {
+            println!("limit collection is disabled in allowlist mode");
+        }
+        return Ok(());
+    }
     if crate::adapters::installed().is_empty() {
         eprintln!("{NO_TOOLS_HINT}");
     }
@@ -113,6 +135,7 @@ struct JsonRow<'a> {
     tool: ToolId,
     session_id: &'a str,
     cwd: Option<&'a Path>,
+    project_alias: Option<String>,
     title: Option<&'a str>,
     preview: Option<&'a str>,
     model: Option<&'a str>,
@@ -134,7 +157,12 @@ fn print_json(rows: &[SessionRow]) -> anyhow::Result<()> {
         .map(|r| JsonRow {
             tool: r.session.key.tool,
             session_id: &r.session.key.id,
-            cwd: r.session.cwd.as_deref(),
+            cwd: if r.project_alias().is_some() {
+                None
+            } else {
+                r.session.cwd.as_deref()
+            },
+            project_alias: r.project_label(),
             title: r.session.title.as_deref(),
             preview: r.session.preview.as_deref(),
             model: r.session.model.as_deref(),
@@ -171,7 +199,7 @@ fn print_table(rows: &[SessionRow]) {
                 r.session.title.as_deref().unwrap_or("-"),
                 44
             )),
-            crate::core::sanitize_for_terminal(&truncate(&dir_label(&r.session), 28)),
+            crate::core::sanitize_for_terminal(&truncate(&dir_label(r), 28)),
             r.tokens_total()
                 .map_or_else(|| "-".to_string(), format_tokens),
             format_age(now - r.session.updated_at_ms),
@@ -179,10 +207,37 @@ fn print_table(rows: &[SessionRow]) {
     }
 }
 
-fn dir_label(session: &SessionSummary) -> String {
-    session
+fn dir_label(row: &SessionRow) -> String {
+    if let Some(alias) = row.project_label() {
+        return alias;
+    }
+    row.session
         .cwd
         .as_deref()
         .and_then(Path::file_name)
         .map_or_else(|| "?".to_string(), |n| n.to_string_lossy().into_owned())
+}
+
+fn load_allowlist(cli: &Cli) -> anyhow::Result<Option<SessionAllowlist>> {
+    cli.session_allowlist
+        .as_deref()
+        .map(SessionAllowlist::load)
+        .transpose()
+}
+
+fn ensure_allowed(cli: &Cli, tool: ToolId, session_id: &str) -> anyhow::Result<()> {
+    let Some(allowlist) = load_allowlist(cli)? else {
+        return Ok(());
+    };
+    let key = crate::core::SessionKey {
+        tool,
+        id: session_id.to_string(),
+    };
+    if !allowlist.contains(&key) {
+        anyhow::bail!(
+            "{} session {session_id} is not enabled in the active allowlist",
+            tool.as_str()
+        );
+    }
+    Ok(())
 }

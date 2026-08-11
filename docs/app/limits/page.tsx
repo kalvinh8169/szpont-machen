@@ -15,15 +15,14 @@ export default function Limits() {
         <li>
           <strong>Claude Code</strong>: token totals per rolling 5h / 7d window
           computed from local logs. Percentages are relative to the largest
-          window ever observed and are labeled <code>est</code>; with{" "}
-          <code>--features online-limits</code> the exact utilization comes
+          window ever observed and are labeled <code>est</code> in the limits
+          popup (<code>~</code> in the top bar). The exact utilization comes
           from the OAuth usage endpoint — every window it reports is shown (5h,
           week, per-model weeks, extra usage).
         </li>
         <li>
-          <strong>Kimi Code</strong>: no limit data on disk; with{" "}
-          <code>--features online-limits</code> the quota cycle and every
-          windowed limit (e.g. the 5h window) come from Kimi&apos;s{" "}
+          <strong>Kimi Code</strong>: no limit data on disk; the quota cycle
+          and every windowed limit (e.g. the 5h window) come from Kimi&apos;s{" "}
           <code>/usages</code> endpoint, with the membership level as the plan.
         </li>
       </ul>

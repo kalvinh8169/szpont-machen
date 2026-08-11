@@ -23,6 +23,6 @@ jobs:
         with:
           workspaces: szpont
       - run: cargo fmt --check
-      - run: cargo clippy --all-targets --features online-limits -- -D warnings
-      - run: cargo test --features online-limits
-      - run: cargo build --release --features online-limits
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test
+      - run: cargo build --release

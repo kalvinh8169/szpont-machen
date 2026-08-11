@@ -24,6 +24,9 @@ pub struct Cli {
     #[arg(long, global = true, help = "Append logs to this file")]
     pub log: Option<PathBuf>,
 
+    #[arg(long, global = true, hide = true, value_name = "FILE")]
+    pub session_allowlist: Option<PathBuf>,
+
     #[arg(long, conflicts_with = "repo", help = "Open the global monitor view")]
     pub global: bool,
 

@@ -113,6 +113,26 @@ footer {
   padding: 1rem 1.5rem;
   color: var(--muted);
   font-size: 0.85rem;
+  text-align: center;
+}
+
+footer p {
+  margin: 0 0 0.5rem;
+}
+
+.social {
+  display: flex;
+  justify-content: center;
+  gap: 1rem;
+}
+
+.social a {
+  color: var(--muted);
+  display: inline-flex;
+}
+
+.social a:hover {
+  color: var(--fg);
 }
 
 .bee {
