@@ -218,6 +218,10 @@ impl ToolAdapter for KimiAdapter {
     }
 
     fn liveness(&self, session: &SessionSummary) -> Liveness {
+        let wire_recent = session
+            .usage_files
+            .iter()
+            .any(|f| super::recently_modified(f));
         let state_recent = session
             .usage_files
             .first()
@@ -230,11 +234,8 @@ impl ToolAdapter for KimiAdapter {
                     .first()
                     .map(|f| f.with_file_name("state.json"))
             })
-            .and_then(|p| std::fs::metadata(p).ok())
-            .and_then(|m| m.modified().ok())
-            .and_then(|t| t.elapsed().ok())
-            .is_some_and(|age| age < super::RUNNING_WINDOW);
-        if state_recent {
+            .is_some_and(|p| super::recently_modified(&p));
+        if wire_recent || state_recent {
             return Liveness::Running;
         }
         self.open_index.liveness(session)
@@ -501,6 +502,26 @@ mod tests {
             native_tokens_used: None,
             usage_files: vec![wire],
         }
+    }
+
+    #[test]
+    fn fresh_wire_activity_reports_running_even_with_stale_state() {
+        let root = fresh_dir("kimi-liveness");
+        let session_dir = root.join("sessions").join("ws").join("session_live");
+        let agent_dir = session_dir.join("agents").join("main");
+        std::fs::create_dir_all(&agent_dir).unwrap();
+        let state = session_dir.join("state.json");
+        std::fs::write(&state, "{}").unwrap();
+        let old = std::time::SystemTime::now() - std::time::Duration::from_mins(10);
+        let old_file = std::fs::File::options().write(true).open(&state).unwrap();
+        old_file
+            .set_times(std::fs::FileTimes::new().set_modified(old))
+            .unwrap();
+        let wire = agent_dir.join("wire.jsonl");
+        std::fs::write(&wire, "{}\n").unwrap();
+        let adapter = KimiAdapter::with_root(root);
+        let session = session_with_wire(wire, "session_live");
+        assert_eq!(adapter.liveness(&session), Liveness::Running);
     }
 
     #[test]

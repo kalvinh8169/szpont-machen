@@ -12,6 +12,14 @@ use crate::store::checkpoints::CheckpointTxn;
 
 pub(crate) const RUNNING_WINDOW: Duration = Duration::from_mins(1);
 
+pub(crate) fn recently_modified(path: &Path) -> bool {
+    std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.elapsed().ok())
+        .is_some_and(|age| age < RUNNING_WINDOW)
+}
+
 pub trait ToolAdapter {
     fn id(&self) -> ToolId;
     fn is_installed(&self) -> bool;
