@@ -225,6 +225,7 @@ pub fn collect_sessions_with(
                 context_tokens,
                 context_window,
             });
+            ckpt.checkpoint()?;
         }
     }
     ckpt.prune_buckets(now_ms() / 1000 - BUCKET_RETENTION_SECS)?;

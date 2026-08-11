@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use rusqlite::{OptionalExtension, Transaction, params};
+use rusqlite::{OptionalExtension, params};
 
 use crate::core::{ToolId, Usage};
 
@@ -15,18 +15,27 @@ pub struct FileCheckpoint {
 }
 
 pub struct CheckpointTxn<'a> {
-    tx: Transaction<'a>,
+    conn: &'a mut rusqlite::Connection,
+    active: bool,
 }
 
 impl<'a> CheckpointTxn<'a> {
     pub fn begin(conn: &'a mut rusqlite::Connection) -> anyhow::Result<CheckpointTxn<'a>> {
-        Ok(CheckpointTxn {
-            tx: conn.transaction()?,
-        })
+        conn.execute_batch("BEGIN IMMEDIATE")?;
+        Ok(CheckpointTxn { conn, active: true })
     }
 
-    pub fn commit(self) -> anyhow::Result<()> {
-        self.tx.commit()?;
+    pub fn checkpoint(&mut self) -> anyhow::Result<()> {
+        self.conn.execute_batch("COMMIT")?;
+        self.active = false;
+        self.conn.execute_batch("BEGIN IMMEDIATE")?;
+        self.active = true;
+        Ok(())
+    }
+
+    pub fn commit(mut self) -> anyhow::Result<()> {
+        self.conn.execute_batch("COMMIT")?;
+        self.active = false;
         Ok(())
     }
 
@@ -42,7 +51,7 @@ impl<'a> CheckpointTxn<'a> {
         context_window: Option<i64>,
     ) -> anyhow::Result<()> {
         super::upsert_session_facts(
-            &self.tx,
+            self.conn,
             tool,
             session_id,
             cwd,
@@ -56,7 +65,7 @@ impl<'a> CheckpointTxn<'a> {
     }
 
     pub fn touch_seen(&self, tool: ToolId, session_id: &str, now: i64) -> anyhow::Result<()> {
-        self.tx.execute(
+        self.conn.execute(
             "UPDATE sessions_meta SET last_seen_at = ?3 WHERE tool = ?1 AND session_id = ?2",
             params![tool.as_str(), session_id, now],
         )?;
@@ -70,7 +79,7 @@ impl<'a> CheckpointTxn<'a> {
         file_path: &Path,
     ) -> anyhow::Result<Option<FileCheckpoint>> {
         let row = self
-            .tx
+            .conn
             .query_row(
                 "SELECT byte_offset, mtime_ms, size, input_uncached, input_cache_read,
                         input_cache_write, output, reasoning, dedup_state
@@ -104,7 +113,7 @@ impl<'a> CheckpointTxn<'a> {
         file_path: &Path,
         ckpt: &FileCheckpoint,
     ) -> anyhow::Result<()> {
-        self.tx.execute(
+        self.conn.execute(
             "INSERT INTO usage_cache
                (tool, session_id, file_path, byte_offset, mtime_ms, size,
                 input_uncached, input_cache_read, input_cache_write, output, reasoning, dedup_state)
@@ -139,7 +148,7 @@ impl<'a> CheckpointTxn<'a> {
     }
 
     pub fn add_bucket(&self, tool: ToolId, hour_ts: i64, usage: &Usage) -> anyhow::Result<()> {
-        self.tx.execute(
+        self.conn.execute(
             "INSERT INTO usage_buckets
                (tool, hour_ts, input_uncached, input_cache_read, input_cache_write, output)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)
@@ -162,10 +171,65 @@ impl<'a> CheckpointTxn<'a> {
     }
 
     pub fn prune_buckets(&self, before_hour_ts: i64) -> anyhow::Result<()> {
-        self.tx.execute(
+        self.conn.execute(
             "DELETE FROM usage_buckets WHERE hour_ts < ?1",
             params![before_hour_ts],
         )?;
         Ok(())
+    }
+}
+
+impl Drop for CheckpointTxn<'_> {
+    fn drop(&mut self) {
+        if self.active {
+            let _ = self.conn.execute_batch("ROLLBACK");
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::*;
+    use crate::store::Store;
+
+    #[test]
+    fn concurrent_read_then_write_txns_serialize() {
+        let dir = PathBuf::from(".tmp/fixtures");
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("ckpt-concurrent.db");
+        let _ = std::fs::remove_file(&db);
+        let _ = Store::open(Some(&db)).unwrap();
+        let writers: Vec<_> = (0..2)
+            .map(|writer| {
+                let db = db.clone();
+                std::thread::spawn(move || {
+                    let mut store = Store::open(Some(&db)).unwrap();
+                    let file = PathBuf::from(format!("file-{writer}"));
+                    for round in 0..25u64 {
+                        let txn = CheckpointTxn::begin(store.conn_mut()).unwrap();
+                        let _ = txn.get(ToolId::Claude, "shared", &file).unwrap();
+                        txn.put(
+                            ToolId::Claude,
+                            "shared",
+                            &file,
+                            &FileCheckpoint {
+                                byte_offset: round,
+                                mtime_ms: 1,
+                                size: round,
+                                usage: Usage::default(),
+                                dedup_state: None,
+                            },
+                        )
+                        .unwrap();
+                        txn.commit().unwrap();
+                    }
+                })
+            })
+            .collect();
+        for writer in writers {
+            writer.join().unwrap();
+        }
     }
 }

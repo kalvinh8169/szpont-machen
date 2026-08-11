@@ -58,7 +58,7 @@ impl Store {
             target.push(suffix);
             restrict_permissions(std::path::Path::new(&target), 0o600);
         }
-        conn.busy_timeout(Duration::from_secs(2))?;
+        conn.busy_timeout(Duration::from_secs(10))?;
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "synchronous", "NORMAL")?;
         let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;

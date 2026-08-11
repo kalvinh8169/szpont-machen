@@ -13,6 +13,32 @@ A terminal manager for AI CLI tool sessions — **Claude Code**, **Codex CLI** a
 
 Docs: <https://tjzel.dev/szpont-machen/>
 
+## Features
+
+### Intuitive TUI experience
+
+![Intuitive TUI experience](docs/public/vids/start.webp)
+
+### Resume your sessions
+
+![Resume your sessions](docs/public/vids/resume.webp)
+
+### Start new sessions
+
+![Start new sessions](docs/public/vids/new.webp)
+
+### Archive your work
+
+![Archive your work](docs/public/vids/archive.webp)
+
+### Rename your session
+
+![Rename your session](docs/public/vids/rename.webp)
+
+### View as a tree
+
+![View as a tree](docs/public/vids/tree.webp)
+
 ## Install
 
 macOS and Linux (arm64 and x86_64).
@@ -53,12 +79,10 @@ Exact limit data from the providers' usage endpoints is included out of the box.
 ## Usage
 
 ```sh
-szpont              # TUI; repo view when the current directory is a repo with sessions
-szpont --global     # TUI; all sessions across all repos
-szpont --repo PATH  # TUI; sessions of a specific repo
+szpont
 ```
 
-Headless commands (`sessions`, `limits`, `complete`, `reopen`, `install-mcp`, `mcp`, `completions`), the keybinding reference and the MCP integration are covered in the docs.
+In a repo it shows that repo's sessions; elsewhere it shows all sessions. Key hints are at the bottom of the screen. Everything else is in the [docs](https://tjzel.dev/szpont-machen/).
 
 ## Development
 
