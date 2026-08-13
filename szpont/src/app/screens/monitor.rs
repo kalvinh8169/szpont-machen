@@ -884,10 +884,8 @@ fn footer_line(app: &App) -> Line<'static> {
     let mut spans: Vec<Span> = vec![Span::raw(" ")];
     if let Some(input) = &app.filter_input {
         let matches = app.visible_indices().len();
-        spans.push(Span::styled(
-            format!("find: {}", input.display_with_cursor()),
-            status_style,
-        ));
+        spans.push(Span::styled("find: ", status_style));
+        spans.extend(input.cursor_spans(status_style));
         spans.push(Span::styled(
             format!("   {matches} match(es)   "),
             Style::new().fg(Color::DarkGray),
@@ -895,20 +893,15 @@ fn footer_line(app: &App) -> Line<'static> {
         spans.extend(hint_spans(&[("enter", "keep"), ("esc", "cancel")]));
     } else if let Some(input) = &app.window_input {
         spans.push(Span::styled(
-            format!(
-                "context window for {}: {}",
-                input.model,
-                input.editor.display_with_cursor()
-            ),
+            format!("context window for {}: ", input.model),
             status_style,
         ));
+        spans.extend(input.editor.cursor_spans(status_style));
         spans.push(Span::raw("   "));
         spans.extend(hint_spans(&[("enter", "save"), ("esc", "cancel")]));
     } else if let Some(input) = &app.rename_input {
-        spans.push(Span::styled(
-            format!("rename: {}", input.editor.display_with_cursor()),
-            status_style,
-        ));
+        spans.push(Span::styled("rename: ", status_style));
+        spans.extend(input.editor.cursor_spans(status_style));
         spans.push(Span::raw("   "));
         spans.extend(hint_spans(&[("enter", "save"), ("esc", "cancel")]));
     } else if let Some(mode) = app.marking {

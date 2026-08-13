@@ -7,6 +7,8 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ratatui::style::{Modifier, Style};
+use ratatui::text::Span;
 
 use crate::adapters;
 use crate::core::repo::RepoContext;
@@ -79,8 +81,25 @@ impl LineEditor {
             .map_or(self.buffer.len(), |(pos, _)| pos)
     }
 
-    pub fn handle(&mut self, code: KeyCode) -> bool {
-        match code {
+    pub fn handle(&mut self, key: KeyEvent) -> bool {
+        let mods = key.modifiers;
+        let shortcut = mods.contains(KeyModifiers::CONTROL) || mods.contains(KeyModifiers::SUPER);
+        match key.code {
+            KeyCode::Char(c) if shortcut => match c {
+                'u' => self.delete_to_start(),
+                'w' => self.delete_word_back(),
+                'h' => self.backspace(),
+                'a' => {
+                    self.cursor = 0;
+                    false
+                }
+                'e' => {
+                    self.cursor = self.buffer.chars().count();
+                    false
+                }
+                _ => false,
+            },
+            KeyCode::Char(_) if mods.contains(KeyModifiers::ALT) => false,
             KeyCode::Char(c) => {
                 if self.buffer.chars().count() >= MAX_EDITOR_CHARS {
                     return false;
@@ -91,13 +110,12 @@ impl LineEditor {
                 true
             }
             KeyCode::Backspace => {
-                if self.cursor > 0 {
-                    self.cursor -= 1;
-                    let at = self.byte_at(self.cursor);
-                    self.buffer.remove(at);
-                    true
+                if mods.contains(KeyModifiers::SUPER) {
+                    self.delete_to_start()
+                } else if mods.contains(KeyModifiers::CONTROL) || mods.contains(KeyModifiers::ALT) {
+                    self.delete_word_back()
                 } else {
-                    false
+                    self.backspace()
                 }
             }
             KeyCode::Delete => {
@@ -129,9 +147,54 @@ impl LineEditor {
         }
     }
 
-    pub fn display_with_cursor(&self) -> String {
+    fn backspace(&mut self) -> bool {
+        if self.cursor == 0 {
+            return false;
+        }
+        self.cursor -= 1;
         let at = self.byte_at(self.cursor);
-        format!("{}█{}", &self.buffer[..at], &self.buffer[at..])
+        self.buffer.remove(at);
+        true
+    }
+
+    fn delete_to_start(&mut self) -> bool {
+        if self.cursor == 0 {
+            return false;
+        }
+        let at = self.byte_at(self.cursor);
+        self.buffer.replace_range(..at, "");
+        self.cursor = 0;
+        true
+    }
+
+    fn delete_word_back(&mut self) -> bool {
+        if self.cursor == 0 {
+            return false;
+        }
+        let chars: Vec<char> = self.buffer.chars().collect();
+        let mut target = self.cursor;
+        while target > 0 && chars[target - 1].is_whitespace() {
+            target -= 1;
+        }
+        while target > 0 && !chars[target - 1].is_whitespace() {
+            target -= 1;
+        }
+        let start = self.byte_at(target);
+        let end = self.byte_at(self.cursor);
+        self.buffer.replace_range(start..end, "");
+        self.cursor = target;
+        true
+    }
+
+    pub fn cursor_spans(&self, base: Style) -> Vec<Span<'static>> {
+        let at = self.byte_at(self.cursor);
+        let mut rest = self.buffer[at..].chars();
+        let under = rest.next().map_or_else(|| " ".to_string(), String::from);
+        vec![
+            Span::styled(self.buffer[..at].to_string(), base),
+            Span::styled(under, base.add_modifier(Modifier::REVERSED)),
+            Span::styled(rest.as_str().to_string(), base),
+        ]
     }
 }
 
@@ -716,8 +779,8 @@ impl App {
                 self.selected = 0;
                 self.remember_selection();
             }
-            code => {
-                let changed = input.handle(code);
+            _ => {
+                let changed = input.handle(key);
                 self.filter_input = Some(input);
                 if changed {
                     self.selected = 0;
@@ -823,8 +886,8 @@ impl App {
                 Action::Refresh
             }
             KeyCode::Esc => Action::None,
-            code => {
-                input.editor.handle(code);
+            _ => {
+                input.editor.handle(key);
                 self.rename_input = Some(input);
                 Action::None
             }
@@ -881,8 +944,8 @@ impl App {
                 }
             }
             KeyCode::Esc => Action::None,
-            code => {
-                input.editor.handle(code);
+            _ => {
+                input.editor.handle(key);
                 self.window_input = Some(input);
                 Action::None
             }
@@ -1535,10 +1598,58 @@ mod tests {
     fn line_editor_caps_its_buffer_and_seed() {
         let mut editor = LineEditor::new("x".repeat(MAX_EDITOR_CHARS + 100));
         assert_eq!(editor.buffer.chars().count(), MAX_EDITOR_CHARS);
-        assert!(!editor.handle(KeyCode::Char('y')));
+        assert!(!editor.handle(key(KeyCode::Char('y'))));
         assert_eq!(editor.buffer.chars().count(), MAX_EDITOR_CHARS);
-        assert!(editor.handle(KeyCode::Backspace));
-        assert!(editor.handle(KeyCode::Char('y')));
+        assert!(editor.handle(key(KeyCode::Backspace)));
+        assert!(editor.handle(key(KeyCode::Char('y'))));
+    }
+
+    #[test]
+    fn line_editor_word_and_line_deletion_shortcuts() {
+        let ctrl = |code| KeyEvent::new(code, KeyModifiers::CONTROL);
+        let alt = |code| KeyEvent::new(code, KeyModifiers::ALT);
+        let cmd = |code| KeyEvent::new(code, KeyModifiers::SUPER);
+
+        let mut editor = LineEditor::new("one two three".to_string());
+        assert!(editor.handle(ctrl(KeyCode::Char('w'))));
+        assert_eq!(editor.buffer, "one two ");
+        assert!(editor.handle(alt(KeyCode::Backspace)));
+        assert_eq!(editor.buffer, "one ");
+        assert!(editor.handle(ctrl(KeyCode::Char('u'))));
+        assert_eq!(editor.buffer, "");
+        assert!(!editor.handle(ctrl(KeyCode::Char('u'))));
+
+        let mut editor = LineEditor::new("one two".to_string());
+        assert!(editor.handle(cmd(KeyCode::Backspace)));
+        assert_eq!(editor.buffer, "");
+
+        let mut editor = LineEditor::new("one two".to_string());
+        assert!(editor.handle(ctrl(KeyCode::Backspace)));
+        assert_eq!(editor.buffer, "one ");
+    }
+
+    #[test]
+    fn line_editor_ignores_modified_chars_instead_of_inserting() {
+        let mut editor = LineEditor::new("abc".to_string());
+        assert!(!editor.handle(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL)));
+        assert!(!editor.handle(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::ALT)));
+        assert_eq!(editor.buffer, "abc");
+    }
+
+    #[test]
+    fn line_editor_cursor_spans_do_not_shift_text() {
+        let mut editor = LineEditor::new("abc".to_string());
+        editor.handle(key(KeyCode::Left));
+        editor.handle(key(KeyCode::Left));
+        let spans = editor.cursor_spans(Style::new());
+        let text: String = spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(text, "abc");
+        assert_eq!(spans[1].content.as_ref(), "b");
+        assert!(spans[1].style.add_modifier.contains(Modifier::REVERSED));
+        editor.handle(key(KeyCode::End));
+        let spans = editor.cursor_spans(Style::new());
+        let text: String = spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(text, "abc ");
     }
 
     #[test]

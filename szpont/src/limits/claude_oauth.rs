@@ -126,6 +126,26 @@ struct UsageResponse {
     seven_day_opus: Option<UsageWindow>,
     seven_day_sonnet: Option<UsageWindow>,
     extra_usage: Option<ExtraUsage>,
+    limits: Option<Vec<LimitEntry>>,
+}
+
+#[derive(Deserialize)]
+struct LimitEntry {
+    kind: Option<String>,
+    group: Option<String>,
+    percent: Option<f64>,
+    resets_at: Option<String>,
+    scope: Option<LimitScope>,
+}
+
+#[derive(Deserialize)]
+struct LimitScope {
+    model: Option<ScopeModel>,
+}
+
+#[derive(Deserialize)]
+struct ScopeModel {
+    display_name: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -143,29 +163,32 @@ struct ExtraUsage {
 
 fn parse_response(body: &str, captured_at: i64) -> Option<ToolLimits> {
     let usage: UsageResponse = serde_json::from_str(body).ok()?;
-    let mut windows = Vec::new();
-    for (window, label, horizon_secs) in [
-        (&usage.five_hour, "5h", 5 * 3600),
-        (&usage.seven_day, "week", 7 * 24 * 3600),
-        (&usage.seven_day_opus, "week opus", 7 * 24 * 3600),
-        (&usage.seven_day_sonnet, "week sonnet", 7 * 24 * 3600),
-    ] {
-        let Some(w) = window else { continue };
-        if w.utilization.is_none() {
-            continue;
+    let mut windows: Vec<WindowUsage> = usage
+        .limits
+        .iter()
+        .flatten()
+        .filter_map(window_from_limit)
+        .collect();
+    if windows.is_empty() {
+        for (window, label, horizon_secs) in [
+            (&usage.five_hour, "5h", 5 * 3600),
+            (&usage.seven_day, "week", 7 * 24 * 3600),
+            (&usage.seven_day_opus, "week opus", 7 * 24 * 3600),
+            (&usage.seven_day_sonnet, "week sonnet", 7 * 24 * 3600),
+        ] {
+            let Some(w) = window else { continue };
+            if w.utilization.is_none() {
+                continue;
+            }
+            windows.push(WindowUsage {
+                label: label.to_string(),
+                used_percent: w.utilization,
+                resets_at: parse_reset(w.resets_at.as_deref()),
+                tokens: None,
+                estimated: false,
+                horizon_secs: Some(horizon_secs),
+            });
         }
-        windows.push(WindowUsage {
-            label: label.to_string(),
-            used_percent: w.utilization,
-            resets_at: w
-                .resets_at
-                .as_deref()
-                .and_then(|ts| OffsetDateTime::parse(ts, &Rfc3339).ok())
-                .map(time::OffsetDateTime::unix_timestamp),
-            tokens: None,
-            estimated: false,
-            horizon_secs: Some(horizon_secs),
-        });
     }
     if let Some(extra) = &usage.extra_usage
         && extra.is_enabled
@@ -193,6 +216,52 @@ fn parse_response(body: &str, captured_at: i64) -> Option<ToolLimits> {
     })
 }
 
+fn window_from_limit(entry: &LimitEntry) -> Option<WindowUsage> {
+    let percent = entry.percent?;
+    let group = entry
+        .group
+        .as_deref()
+        .or(entry.kind.as_deref())
+        .unwrap_or("window");
+    let (base, horizon_secs) = match group {
+        "session" => ("5h".to_string(), Some(5 * 3600)),
+        "weekly" => ("week".to_string(), Some(7 * 24 * 3600)),
+        other => (clean_label(other), None),
+    };
+    let scope = entry
+        .scope
+        .as_ref()
+        .and_then(|s| s.model.as_ref())
+        .and_then(|m| m.display_name.as_deref())
+        .map(clean_label)
+        .filter(|name| !name.is_empty());
+    let label = match scope {
+        Some(model) => format!("{base} {model}"),
+        None => base,
+    };
+    Some(WindowUsage {
+        label,
+        used_percent: Some(percent),
+        resets_at: parse_reset(entry.resets_at.as_deref()),
+        tokens: None,
+        estimated: false,
+        horizon_secs,
+    })
+}
+
+fn clean_label(raw: &str) -> String {
+    crate::core::sanitize_for_terminal(raw)
+        .chars()
+        .take(24)
+        .collect::<String>()
+        .to_lowercase()
+}
+
+fn parse_reset(ts: Option<&str>) -> Option<i64> {
+    ts.and_then(|ts| OffsetDateTime::parse(ts, &Rfc3339).ok())
+        .map(OffsetDateTime::unix_timestamp)
+}
+
 #[cfg(test)]
 mod tests {
     use super::parse_response;
@@ -214,6 +283,27 @@ mod tests {
         assert_eq!(limits.windows[0].horizon_secs, Some(5 * 3600));
         assert_eq!(limits.captured_at, 123);
         assert_eq!(limits.source, "oauth");
+    }
+
+    #[test]
+    fn structured_limits_array_wins_and_carries_model_scoped_windows() {
+        let body = r#"{
+            "five_hour": {"utilization": 23.0, "resets_at": "2026-08-12T17:30:00.076485+00:00"},
+            "limits": [
+                {"kind": "session", "group": "session", "percent": 23,
+                 "resets_at": "2026-08-12T17:30:00.076485+00:00", "scope": null},
+                {"kind": "weekly_scoped", "group": "weekly", "percent": 86,
+                 "resets_at": "2026-08-14T10:00:00.077500+00:00",
+                 "scope": {"model": {"id": null, "display_name": "Fable"}, "surface": null}},
+                {"kind": "weekly", "group": "weekly", "percent": null}
+            ]
+        }"#;
+        let limits = parse_response(body, 5).unwrap();
+        let labels: Vec<&str> = limits.windows.iter().map(|w| w.label.as_str()).collect();
+        assert_eq!(labels, vec!["5h", "week fable"]);
+        assert_eq!(limits.windows[1].used_percent, Some(86.0));
+        assert_eq!(limits.windows[1].horizon_secs, Some(7 * 24 * 3600));
+        assert!(limits.windows[1].resets_at.is_some());
     }
 
     #[test]

@@ -74,21 +74,20 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         separator_area,
     );
     let footer = if let Some(input) = &app.window_input {
-        Line::from(vec![
-            Span::styled(
-                format!(
-                    " context window for {}: {}",
-                    input.model,
-                    input.editor.display_with_cursor()
-                ),
-                Style::new().fg(Color::Yellow),
-            ),
+        let style = Style::new().fg(Color::Yellow);
+        let mut spans = vec![Span::styled(
+            format!(" context window for {}: ", input.model),
+            style,
+        )];
+        spans.extend(input.editor.cursor_spans(style));
+        spans.extend(vec![
             Span::raw("   "),
             Span::styled("enter", Style::new().fg(Color::Cyan).bold()),
             Span::styled(" save  ·  ", Style::new().fg(Color::DarkGray)),
             Span::styled("esc", Style::new().fg(Color::Cyan).bold()),
             Span::styled(" cancel", Style::new().fg(Color::Gray)),
-        ])
+        ]);
+        Line::from(spans)
     } else {
         Line::from(vec![
             Span::raw(" "),
