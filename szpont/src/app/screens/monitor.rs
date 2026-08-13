@@ -28,10 +28,12 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     let width = frame.area().width.max(1) as usize;
     let footer = footer_line(app);
     let footer_height = wrapped_height(footer.width(), width, MAX_FOOTER_LINES);
+    let status_height = wrapped_height(header_line(app, true).width(), width, MAX_HEADER_LINES);
+    let limits_height = wrapped_height(limits_line(app).width(), width, MAX_HEADER_LINES);
     let header_height = if tall {
         crate::app::widgets::logo::HEIGHT
     } else {
-        wrapped_height(header_line(app, true).width(), width, MAX_HEADER_LINES)
+        status_height + limits_height
     };
     let [header_area, table_area, separator_area, footer_area] = Layout::vertical([
         Constraint::Length(header_height),
@@ -56,7 +58,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             Paragraph::new(crate::app::widgets::logo::carton(flapped)),
             logo_area,
         );
-        let [title_line, info_lines, scan_line, _] = Layout::vertical([
+        let [title_line, info_lines, limits_area, scan_line, _] = Layout::vertical([
+            Constraint::Length(1),
             Constraint::Length(1),
             Constraint::Length(2),
             Constraint::Length(1),
@@ -74,6 +77,10 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             Paragraph::new(header_line(app, false)).wrap(Wrap { trim: true }),
             info_lines,
         );
+        frame.render_widget(
+            Paragraph::new(limits_line(app)).wrap(Wrap { trim: true }),
+            limits_area,
+        );
         if let Some(scan) = &app.scan_status {
             frame.render_widget(
                 Paragraph::new(format!(" {scan}")).style(Style::new().fg(Color::DarkGray)),
@@ -81,9 +88,18 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             );
         }
     } else {
+        let [status_area, limits_area] = Layout::vertical([
+            Constraint::Length(status_height),
+            Constraint::Length(limits_height),
+        ])
+        .areas(header_area);
         frame.render_widget(
             Paragraph::new(header_line(app, true)).wrap(Wrap { trim: true }),
-            header_area,
+            status_area,
+        );
+        frame.render_widget(
+            Paragraph::new(limits_line(app)).wrap(Wrap { trim: true }),
+            limits_area,
         );
     }
     draw_table(frame, app, table_area);
@@ -402,8 +418,6 @@ fn header_line(app: &App, with_logo: bool) -> Line<'static> {
             Style::new().fg(Color::Blue).bold(),
         ));
     }
-    spans.push(Span::styled("   │", Style::new().fg(Color::DarkGray)));
-    spans.extend(limits_spans(app));
     if with_logo && let Some(scan) = &app.scan_status {
         spans.push(Span::styled(
             format!("   ⋯ {scan}"),
@@ -413,20 +427,27 @@ fn header_line(app: &App, with_logo: bool) -> Line<'static> {
     Line::from(spans)
 }
 
+fn limits_line(app: &App) -> Line<'static> {
+    let mut spans = vec![Span::styled(
+        " limits",
+        Style::new().fg(Color::DarkGray).bold(),
+    )];
+    spans.extend(limits_spans(app));
+    Line::from(spans)
+}
+
 fn limits_spans(app: &App) -> Vec<Span<'static>> {
     if app.limits_disabled {
-        return vec![Span::styled(
-            " limits: hidden",
-            Style::new().fg(Color::DarkGray),
-        )];
+        return vec![Span::styled(": hidden", Style::new().fg(Color::DarkGray))];
     }
     if app.limits.is_empty() {
         return vec![Span::styled(
-            " limits: measuring…",
+            ": measuring…",
             Style::new().fg(Color::DarkGray),
         )];
     }
-    let mut spans = vec![Span::raw(" ")];
+    let now = now_ms();
+    let mut spans = vec![Span::raw("  ")];
     let mut first = true;
     for tool in &app.limits {
         if !first {
@@ -464,9 +485,27 @@ fn limits_spans(app: &App) -> Vec<Span<'static>> {
                     )));
                 }
             }
+            if let Some(remaining) = reset_in(window, now) {
+                spans.push(Span::styled(
+                    format!(" ↻{remaining}"),
+                    Style::new().fg(Color::DarkGray),
+                ));
+            }
         }
     }
     spans
+}
+
+fn reset_in(window: &crate::limits::WindowUsage, now: i64) -> Option<String> {
+    let remaining_ms = window
+        .resets_at?
+        .saturating_mul(1000)
+        .saturating_sub(now)
+        .max(0);
+    if remaining_ms == 0 {
+        return None;
+    }
+    Some(format_age(remaining_ms))
 }
 
 fn usage_color(pct: f64) -> Color {
@@ -1077,5 +1116,83 @@ fn context_cell(row: &SessionRow) -> Cell<'static> {
         }
         (Some(tokens), _) => Cell::from(format!("{:>13}", format_tokens(tokens))),
         _ => Cell::from(format!("{:>13}", "-")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    use super::*;
+    use crate::core::now_ms;
+    use crate::limits::{ToolLimits, WindowUsage};
+
+    fn app_with_limits(name: &str, resets_in_secs: i64) -> App {
+        let dir = std::path::PathBuf::from(".tmp/fixtures");
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = dir.join(format!("screen-{name}.db"));
+        let _ = std::fs::remove_file(&db);
+        let store = crate::store::Store::open(Some(&db)).unwrap();
+        let mut app = App::new(store, None, false);
+        app.received_first_snapshot = true;
+        app.limits = vec![ToolLimits {
+            tool: crate::core::ToolId::Claude,
+            windows: vec![WindowUsage {
+                label: "5h".to_string(),
+                used_percent: Some(24.0),
+                resets_at: Some(now_ms() / 1000 + resets_in_secs),
+                tokens: None,
+                estimated: false,
+                horizon_secs: Some(5 * 3600),
+            }],
+            plan: None,
+            captured_at: now_ms(),
+            source: "test".to_string(),
+            note: None,
+        }];
+        app
+    }
+
+    fn rendered_rows(app: &mut App, width: u16, height: u16) -> Vec<String> {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal.draw(|frame| draw(frame, app)).unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        (0..height)
+            .map(|y| {
+                (0..width)
+                    .map(|x| buffer.cell((x, y)).unwrap().symbol().to_string())
+                    .collect::<String>()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn limits_render_on_their_own_row_with_a_reset_countdown() {
+        for (width, height) in [(120, 30), (100, 18)] {
+            let mut app = app_with_limits(&format!("row-{width}"), 2 * 3600);
+            let rows = rendered_rows(&mut app, width, height);
+            let limits_row = rows
+                .iter()
+                .position(|line| line.contains("limits"))
+                .unwrap_or_else(|| panic!("no limits row at {width}x{height}: {rows:#?}"));
+            let status_row = rows
+                .iter()
+                .position(|line| line.contains("RUNNING"))
+                .unwrap_or_else(|| panic!("no status row at {width}x{height}"));
+            assert_ne!(
+                limits_row, status_row,
+                "limits share the status row at {width}x{height}"
+            );
+            assert!(
+                !rows[status_row].contains("limits"),
+                "status row still carries limits at {width}x{height}"
+            );
+            assert!(
+                rows[limits_row].contains('↻'),
+                "no reset countdown at {width}x{height}: {:?}",
+                rows[limits_row]
+            );
+        }
     }
 }

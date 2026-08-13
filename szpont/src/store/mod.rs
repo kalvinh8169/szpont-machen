@@ -148,6 +148,28 @@ impl Store {
         Ok(map)
     }
 
+    pub fn custom_titles(&self) -> anyhow::Result<HashMap<SessionKey, String>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT tool, session_id, title FROM sessions_meta
+             WHERE title_source = 'custom' AND title IS NOT NULL",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })?;
+        let mut map = HashMap::new();
+        for row in rows {
+            let (tool, id, title) = row?;
+            if let Ok(tool) = ToolId::parse(&tool) {
+                map.insert(SessionKey { tool, id }, title);
+            }
+        }
+        Ok(map)
+    }
+
     pub fn delete_session_data(&self, tool: ToolId, session_id: &str) -> anyhow::Result<()> {
         self.conn.execute(
             "DELETE FROM sessions_meta WHERE tool = ?1 AND session_id = ?2",

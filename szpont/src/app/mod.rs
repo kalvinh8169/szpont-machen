@@ -410,8 +410,19 @@ impl App {
         }
     }
 
-    fn install_snapshot(&mut self, rows: Vec<SessionRow>) {
+    fn install_snapshot(&mut self, mut rows: Vec<SessionRow>) {
         let first = !self.received_first_snapshot;
+        match self.store.custom_titles() {
+            Ok(titles) if !titles.is_empty() => {
+                for row in &mut rows {
+                    if let Some(title) = titles.get(&row.session.key) {
+                        row.session.title = Some(title.clone());
+                    }
+                }
+            }
+            Ok(_) => {}
+            Err(err) => crate::logging::warn(&format!("cannot read custom titles: {err:#}")),
+        }
         self.rows = rows;
         self.received_first_snapshot = true;
         if first
@@ -1592,6 +1603,37 @@ mod tests {
         app.apply_snapshot(vec![fake_row("a"), fake_row("b")]);
         assert_eq!(app.selected, 1);
         assert_eq!(app.selected_row().unwrap().session.key.id, "b");
+    }
+
+    #[test]
+    fn rename_survives_a_snapshot_scanned_before_it_landed() {
+        let mut app = test_app("rename-race");
+        let target = SessionKey {
+            tool: ToolId::Claude,
+            id: "b".to_string(),
+        };
+        crate::store::upsert_session_facts(
+            app.store.conn(),
+            target.tool,
+            &target.id,
+            None,
+            Some(("My name", crate::core::TitleKind::Custom)),
+            None,
+            None,
+            None,
+            None,
+            "rename",
+        )
+        .unwrap();
+        app.apply_next_snapshot = true;
+        app.apply_snapshot(vec![fake_row("a"), fake_row("b")]);
+        let renamed = app
+            .rows
+            .iter()
+            .find(|r| r.session.key == target)
+            .expect("row present");
+        assert_eq!(renamed.session.title.as_deref(), Some("My name"));
+        assert_eq!(app.rows[0].session.title.as_deref(), Some("session a"));
     }
 
     #[test]
