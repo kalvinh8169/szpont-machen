@@ -12,6 +12,7 @@ const STALE_AFTER_MS: i64 = 3600 * 1000;
 const FIVE_HOURS_SECS: i64 = 5 * 3600;
 const WEEK_SECS: i64 = 7 * 24 * 3600;
 pub(crate) const MIN_CALL_INTERVAL_MS: i64 = 180_000;
+const CACHE_WRITER: &str = env!("CARGO_PKG_VERSION");
 pub(crate) const HTTP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -137,14 +138,22 @@ pub(crate) fn cached_probe(
         .flatten()
         .and_then(|v| v.parse::<i64>().ok())
         .unwrap_or(0);
-    if now - last_call < MIN_CALL_INTERVAL_MS {
-        let cached = store.meta_get(cache_key).ok().flatten()?;
-        return serde_json::from_str::<ToolLimits>(&cached).ok();
+    if now - last_call < MIN_CALL_INTERVAL_MS
+        && let Some(cached) = store.meta_get(cache_key).ok().flatten()
+        && store
+            .meta_get(&format!("{cache_key}_writer"))
+            .ok()
+            .flatten()
+            .is_some_and(|writer| writer == CACHE_WRITER)
+        && let Ok(limits) = serde_json::from_str::<ToolLimits>(&cached)
+    {
+        return Some(limits);
     }
     let _ = store.meta_set(last_call_key, &now.to_string());
     let limits = fetch()?;
     if let Ok(json) = serde_json::to_string(&limits) {
         let _ = store.meta_set(cache_key, &json);
+        let _ = store.meta_set(&format!("{cache_key}_writer"), CACHE_WRITER);
     }
     Some(limits)
 }
@@ -301,7 +310,46 @@ pub(crate) fn humanize_window(minutes: i64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{humanize_window, last_rate_limits, percent_of};
+    use super::{ToolLimits, humanize_window, last_rate_limits, percent_of};
+    #[test]
+    fn a_cache_written_by_another_version_is_refetched_not_reused() {
+        let dir = std::path::PathBuf::from(".tmp/fixtures");
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("limits-cache-writer.db");
+        let _ = std::fs::remove_file(&db);
+        let store = crate::store::Store::open(Some(&db)).unwrap();
+        let stale = ToolLimits {
+            tool: crate::core::ToolId::Claude,
+            windows: Vec::new(),
+            plan: None,
+            captured_at: 1,
+            source: "stale".to_string(),
+            note: None,
+        };
+        store
+            .meta_set("k_cache", &serde_json::to_string(&stale).unwrap())
+            .unwrap();
+        store.meta_set("k_cache_writer", "0.0.1-old").unwrap();
+        store
+            .meta_set("k_last", &crate::core::now_ms().to_string())
+            .unwrap();
+
+        let fresh = |source: &str| ToolLimits {
+            tool: crate::core::ToolId::Claude,
+            windows: Vec::new(),
+            plan: None,
+            captured_at: 2,
+            source: source.to_string(),
+            note: None,
+        };
+        let got = super::cached_probe(&store, "k_last", "k_cache", || Some(fresh("fresh")));
+        assert_eq!(got.unwrap().source, "fresh");
+
+        let got = super::cached_probe(&store, "k_last", "k_cache", || {
+            panic!("must reuse the cache written by this version")
+        });
+        assert_eq!(got.unwrap().source, "fresh");
+    }
 
     #[test]
     fn last_rate_limits_takes_the_newest_token_count_line() {
