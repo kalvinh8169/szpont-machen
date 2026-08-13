@@ -3,12 +3,15 @@ use std::path::Path;
 use serde::Serialize;
 
 use crate::allowlist::SessionAllowlist;
-use crate::cli::{Cli, SessionsArgs};
+use crate::cli::{Cli, ReportStartArgs, SessionsArgs};
 use crate::core::snapshot::{SessionRow, collect_sessions_filtered};
-use crate::core::{Liveness, ToolId, Usage, format_age, format_tokens, now_ms, truncate};
+use crate::core::{
+    Liveness, SessionKey, ToolId, Usage, format_age, format_tokens, now_ms, truncate,
+};
 use crate::store::Store;
 
 const NO_TOOLS_HINT: &str = "no AI CLI session stores found (looked in ~/.claude/projects, ~/.codex, ~/.kimi-code/sessions; override with CLAUDE_CONFIG_DIR / CODEX_HOME / KIMI_CODE_HOME)";
+const MAX_HOOK_PAYLOAD_BYTES: u64 = 64 * 1024;
 
 pub fn sessions(cli: &Cli, args: &SessionsArgs) -> anyhow::Result<()> {
     let mut store = Store::open(cli.db.as_deref())?;
@@ -34,6 +37,15 @@ pub fn sessions(cli: &Cli, args: &SessionsArgs) -> anyhow::Result<()> {
     } else {
         print_table(&rows);
         Ok(())
+    }
+}
+
+pub fn report_start(cli: &Cli, args: &ReportStartArgs) {
+    if let Err(err) = report_start_inner(cli, args) {
+        eprintln!(
+            "szpont: {}",
+            crate::core::sanitize_for_terminal(&format!("{err:#}"))
+        );
     }
 }
 
@@ -223,6 +235,93 @@ fn load_allowlist(cli: &Cli) -> anyhow::Result<Option<SessionAllowlist>> {
         .as_deref()
         .map(SessionAllowlist::load)
         .transpose()
+}
+
+fn report_start_inner(cli: &Cli, args: &ReportStartArgs) -> anyhow::Result<()> {
+    let tool = ToolId::parse(&args.tool)?;
+    let hook = if args.claude_hook {
+        read_hook_payload()
+    } else {
+        None
+    };
+    let cwd = args
+        .cwd
+        .as_deref()
+        .map(|p| p.to_string_lossy().into_owned())
+        .or_else(|| hook_str(hook.as_ref(), "cwd"))
+        .unwrap_or_else(current_dir_string);
+    let cwd = crate::core::sanitize_for_terminal(&cwd);
+    let session_id = args
+        .session_id
+        .clone()
+        .or_else(|| hook_str(hook.as_ref(), "session_id"))
+        .filter(|id| crate::session_resolve::valid_session_id(id));
+    let title = args
+        .title
+        .as_deref()
+        .map(crate::core::sanitize_for_terminal);
+    let store = Store::open(cli.db.as_deref())?;
+    let Some(id) =
+        session_id.or_else(|| crate::session_resolve::newest_session_in(&store, tool, &cwd))
+    else {
+        println!(
+            "szpont: no {} session found in {cwd} yet; it will be picked up by the next scan",
+            tool.as_str()
+        );
+        return Ok(());
+    };
+    let stored_cwd = store.session_meta_map().ok().and_then(|meta| {
+        meta.get(&SessionKey {
+            tool,
+            id: id.clone(),
+        })
+        .and_then(|m| m.cwd.clone())
+    });
+    let cwd_update = if stored_cwd.is_some() {
+        None
+    } else {
+        Some(cwd.as_str())
+    };
+    crate::store::upsert_session_facts(
+        store.conn(),
+        tool,
+        &id,
+        cwd_update,
+        title.as_deref().map(|t| (t, crate::core::TitleKind::Auto)),
+        None,
+        None,
+        None,
+        None,
+        "cli",
+    )?;
+    println!(
+        "szpont: this session is tracked as tool={} session_id={id} (cwd {cwd}). When the user asks \
+         to mark this session complete or archived, call the szpont mark_session_completed tool \
+         with exactly this tool and session_id; never call it unprompted.",
+        tool.as_str()
+    );
+    Ok(())
+}
+
+fn read_hook_payload() -> Option<serde_json::Value> {
+    use std::io::Read;
+    let mut raw = String::new();
+    std::io::stdin()
+        .take(MAX_HOOK_PAYLOAD_BYTES)
+        .read_to_string(&mut raw)
+        .ok()?;
+    serde_json::from_str(&raw).ok()
+}
+
+fn hook_str(hook: Option<&serde_json::Value>, name: &str) -> Option<String> {
+    hook.and_then(|h| h.get(name))
+        .and_then(serde_json::Value::as_str)
+        .filter(|s| !s.is_empty())
+        .map(std::string::ToString::to_string)
+}
+
+fn current_dir_string() -> String {
+    std::env::current_dir().map_or_else(|_| String::new(), |p| p.to_string_lossy().into_owned())
 }
 
 fn ensure_allowed(cli: &Cli, tool: ToolId, session_id: &str) -> anyhow::Result<()> {

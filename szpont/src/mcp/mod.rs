@@ -176,6 +176,20 @@ mod tests {
     }
 
     #[test]
+    fn initialize_documents_every_advertised_tool() {
+        let result = protocol::initialize_result(&Value::Null);
+        let instructions = result["instructions"].as_str().unwrap();
+        assert!(!instructions.trim().is_empty());
+        for tool in tools::definitions() {
+            let name = tool["name"].as_str().unwrap();
+            assert!(
+                instructions.contains(name),
+                "{name} is advertised but not covered by the instructions"
+            );
+        }
+    }
+
+    #[test]
     fn report_session_start_does_not_overwrite_a_stored_cwd() {
         let mut store = test_store("report-cwd");
         crate::store::upsert_session_facts(

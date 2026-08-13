@@ -8,6 +8,7 @@ mod limits;
 mod logging;
 mod mcp;
 mod scanner;
+mod session_resolve;
 mod store;
 
 use clap::Parser;
@@ -18,6 +19,10 @@ fn main() -> anyhow::Result<()> {
     logging::init(args.log.as_deref(), stderr_allowed);
     match &args.command {
         Some(cli::Command::Sessions(sessions_args)) => commands::sessions(&args, sessions_args),
+        Some(cli::Command::ReportStart(report_args)) => {
+            commands::report_start(&args, report_args);
+            Ok(())
+        }
         Some(cli::Command::Complete { tool, session_id }) => {
             commands::complete(&args, tool, session_id)
         }

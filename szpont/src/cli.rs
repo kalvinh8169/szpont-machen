@@ -38,6 +38,8 @@ pub struct Cli {
 pub enum Command {
     #[command(about = "List sessions (headless)")]
     Sessions(SessionsArgs),
+    #[command(about = "Report that a session started, so szpont tracks it")]
+    ReportStart(ReportStartArgs),
     #[command(about = "Mark a session as completed")]
     Complete { tool: String, session_id: String },
     #[command(about = "Reopen a completed session")]
@@ -58,6 +60,23 @@ pub enum Command {
     },
     #[command(about = "Print shell completions (bash, zsh, fish, elvish, powershell)")]
     Completions { shell: clap_complete::Shell },
+}
+
+#[derive(Args)]
+pub struct ReportStartArgs {
+    #[arg(help = "Which tool the session belongs to (claude, codex or kimi)")]
+    pub tool: String,
+    #[arg(long, help = "The session id")]
+    pub session_id: Option<String>,
+    #[arg(long, help = "Absolute path of the session working directory")]
+    pub cwd: Option<PathBuf>,
+    #[arg(long, help = "Short human-readable task title")]
+    pub title: Option<String>,
+    #[arg(
+        long,
+        help = "Read session_id and cwd from a Claude Code hook JSON payload on stdin"
+    )]
+    pub claude_hook: bool,
 }
 
 #[derive(Args)]

@@ -1,9 +1,7 @@
-use std::path::{Path, PathBuf};
-
 use serde_json::{Value, json};
 
-use crate::adapters;
 use crate::core::{SessionKey, ToolId, now_ms};
+use crate::session_resolve::{newest_session_in, valid_session_id};
 use crate::store::Store;
 
 const MAX_AUDIT_PAYLOAD_BYTES: usize = 4096;
@@ -178,31 +176,6 @@ fn explicit_session_id(args: &Value) -> Option<String> {
         .and_then(Value::as_str)
         .filter(|s| valid_session_id(s))
         .map(std::string::ToString::to_string)
-}
-
-fn valid_session_id(id: &str) -> bool {
-    crate::core::valid_session_id(id, None)
-}
-
-fn newest_session_in(store: &Store, tool: ToolId, cwd: &str) -> Option<String> {
-    let cwd = Path::new(cwd)
-        .canonicalize()
-        .unwrap_or_else(|_| PathBuf::from(cwd));
-    let meta = store.session_meta_map().ok()?;
-    let adapter = adapters::by_id(tool)?;
-    let sessions = adapter.discover().ok()?;
-    sessions
-        .into_iter()
-        .filter(|s| {
-            let stored_cwd = meta
-                .get(&s.key)
-                .and_then(|m| m.cwd.clone())
-                .map(PathBuf::from);
-            s.cwd.as_deref().is_some_and(|c| c == cwd)
-                || stored_cwd.as_deref().is_some_and(|c| c == cwd)
-        })
-        .max_by_key(|s| s.updated_at_ms)
-        .map(|s| s.key.id)
 }
 
 fn audit(
